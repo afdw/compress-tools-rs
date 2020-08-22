@@ -64,11 +64,6 @@ use std::{
 };
 use crate::base::{ArchiveReader, READER_BUFFER_SIZE, ArchiveDiskWriter};
 
-struct Pipe<'a> {
-    reader: &'a mut dyn Read,
-    buffer: &'a mut [u8],
-}
-
 struct SyncPipe<'a> {
     buffer: [u8; READER_BUFFER_SIZE],
     reader: &'a mut dyn Read,
@@ -112,7 +107,7 @@ where
     R: Read,
 {
     let pipe = SyncPipe::from(&mut source);
-    return ArchiveReader::read_all_entries(pipe);
+    ArchiveReader::read_all_entries(pipe)
 }
 
 /// Uncompress a file using the `source` need as reader and the `target` as a

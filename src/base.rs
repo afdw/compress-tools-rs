@@ -62,9 +62,9 @@ impl ArchiveEntry {
 
     pub fn pathname(&self) -> Result<String> {
         unsafe {
-            return CStr::from_ptr(ffi::archive_entry_pathname(self.inner)).to_str()
+            CStr::from_ptr(ffi::archive_entry_pathname(self.inner)).to_str()
                 .map(|s| s.to_owned())
-                .map_err(|e| Error::Utf(e));
+                .map_err(Error::Utf)
         }
     }
 
@@ -80,9 +80,9 @@ impl ArchiveEntry {
             if ptr.is_null() {
                 return Ok(None)
             }
-            return CStr::from_ptr(ptr).to_str()
+            CStr::from_ptr(ptr).to_str()
                 .map(|s| Some(s.to_owned()))
-                .map_err(|e| Error::Utf(e));
+                .map_err(Error::Utf)
         }
     }
 
@@ -216,7 +216,7 @@ impl ArchiveReader {
     }
 
     pub fn read_all_entries<P: Pipe>(pipe: P) -> Result<Vec<String>> {
-        return ArchiveReader::open_with(Mode::AllFormat, pipe, |archive| {
+        ArchiveReader::open_with(Mode::AllFormat, pipe, |archive| {
             let mut entries = Vec::<String>::new();
             loop {
                 match archive.next_entry() {
@@ -227,18 +227,18 @@ impl ArchiveReader {
                     }
                 }
             }
-        });
+        })
     }
 
     pub fn next_entry(&self) -> Result<ArchiveEntry> {
         unsafe {
             let mut entry_ptr = std::ptr::null_mut();
-            return match ffi::archive_read_next_header(self.inner, &mut entry_ptr) {
+            match ffi::archive_read_next_header(self.inner, &mut entry_ptr) {
                 ffi::ARCHIVE_OK => {
                     Ok(ArchiveEntry { inner: entry_ptr, need_free: false })
                 }
                 ffi::ARCHIVE_EOF => Err(Error::Eof),
-                _ => return Err(Error::from(self.inner)),
+                _ => Err(Error::from(self.inner)),
             }
         }
     }
@@ -266,7 +266,7 @@ impl ArchiveReader {
             let mut buffer: *const c_void = std::ptr::null();
             let mut offset = 0;
             let mut size = 0;
-            return match ffi::archive_read_data_block(self.inner, &mut buffer, &mut size, &mut offset) {
+            match ffi::archive_read_data_block(self.inner, &mut buffer, &mut size, &mut offset) {
                 ffi::ARCHIVE_EOF => Err(Error::Eof),
                 ffi::ARCHIVE_OK => Ok(Vec::from_raw_parts(buffer as *mut u8, size, size)),
                 _ => Err(Error::from(self.inner)),
