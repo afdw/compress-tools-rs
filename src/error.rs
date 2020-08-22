@@ -30,6 +30,9 @@ pub enum Error {
 
     #[display(fmt = "Disk access not supported in async environment")]
     AsyncDiskAccessNotSupported,
+
+    #[display(fmt = "End of file")]
+    Eof,
 }
 
 pub(crate) fn archive_result(value: i32, archive: *mut ffi::archive) -> Result<()> {

@@ -132,6 +132,9 @@ extern "C" {
     );
 }
 extern "C" {
+    pub fn archive_entry_new() -> *mut archive_entry;
+}
+extern "C" {
     pub fn archive_entry_free(arg1: *mut archive_entry);
 }
 extern "C" {

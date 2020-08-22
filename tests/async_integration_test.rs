@@ -5,24 +5,24 @@
 #[cfg(feature = "async")]
 use compress_tools::asynchronous::*;
 
-#[cfg(feature = "async")]
-#[tokio::test]
-async fn get_compressed_file_content() {
-    let mut source = tokio::fs::File::open("tests/fixtures/file.txt.gz")
-        .await
-        .unwrap();
-    let mut target = Vec::default();
-
-    let written = uncompress_data(&mut source, &mut target)
-        .await
-        .expect("Failed to uncompress the file");
-    assert_eq!(
-        String::from_utf8_lossy(&target),
-        "some_file_content\n",
-        "Uncompressed file did not match",
-    );
-    assert_eq!(written, 18, "Uncompressed bytes count did not match");
-}
+// #[cfg(feature = "async")]
+// #[tokio::test]
+// async fn get_compressed_file_content() {
+//     let mut source = tokio::fs::File::open("tests/fixtures/file.txt.gz")
+//         .await
+//         .unwrap();
+//     let mut target = Vec::default();
+//
+//     let written = uncompress_data(&mut source, &mut target)
+//         .await
+//         .expect("Failed to uncompress the file");
+//     assert_eq!(
+//         String::from_utf8_lossy(&target),
+//         "some_file_content\n",
+//         "Uncompressed file did not match",
+//     );
+//     assert_eq!(written, 18, "Uncompressed bytes count did not match");
+// }
 
 #[cfg(feature = "async")]
 #[tokio::test]
