@@ -17,6 +17,11 @@ coveralls = { repository = "ossystems/compress-tools-rs" }
 
 [dependencies]
 derive_more = { version = "0.99", default-features = false, features = ["display", "from", "error"] }
+futures = { version = "0.3.5", optional = true }
+tokio = { version = "0.2.22", features = ["blocking", "macros", "fs", "net"], optional = true }
+
+[features]
+tokio_support = ["futures", "tokio"]
 
 [dev-dependencies]
 tempfile = "3.1"
@@ -27,3 +32,7 @@ vcpkg = "0.2"
 
 [target.'cfg(not(target_os = "windows"))'.build-dependencies]
 pkg-config = "0.3"
+
+[[example]]
+name = "uncompress_service"
+required-features = ["tokio_support"]
