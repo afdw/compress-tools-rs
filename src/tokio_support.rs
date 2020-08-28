@@ -117,7 +117,7 @@ pub async fn list_archive_files<R>(source: R) -> Result<Vec<String>>
 where
     R: AsyncRead + Unpin,
 {
-    wrap_async_read(source, move |source| crate::list_archive_files(source)).await?
+    wrap_async_read(source, crate::list_archive_files).await?
 }
 
 pub async fn uncompress_data<R, W>(source: R, target: W) -> Result<usize>
@@ -125,7 +125,7 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    wrap_async_read_and_write(source, target, move |source, target| {
+    wrap_async_read_and_write(source, target, |source, target| {
         crate::uncompress_data(source, target)
     })
     .await?

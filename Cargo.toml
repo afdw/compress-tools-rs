@@ -34,5 +34,5 @@ vcpkg = "0.2"
 pkg-config = "0.3"
 
 [[example]]
-name = "uncompress_service"
+name = "async_uncompress_service"
 required-features = ["tokio_support"]
