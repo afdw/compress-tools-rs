@@ -1,14 +1,10 @@
-use compress_tools::tokio_support::*;
-use tokio::net::TcpListener;
+use std::net::TcpListener;
+use compress_tools::uncompress_data;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut listener = TcpListener::bind("127.0.0.1:1234").await?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let listener = TcpListener::bind("127.0.0.1:1234")?;
     loop {
-        let (socket, _) = listener.accept().await?;
-        tokio::spawn(async move {
-            let (read_half, write_half) = socket.into_split();
-            println!("{:?}", uncompress_data(read_half, write_half).await);
-        });
+        let (socket, _) = listener.accept()?;
+        println!("{:?}", uncompress_data(&socket, &socket));
     }
 }
