@@ -1,38 +1,29 @@
 use crate::{Ownership, Result};
 use futures::{
     channel::mpsc::{Receiver, Sender},
+    join,
+    stream::FusedStream,
     SinkExt, StreamExt,
 };
 use std::{
+    future::Future,
     io::{Read, Write},
     path::Path,
 };
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::{
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    task::JoinError,
+};
 
-struct Reader {
+struct AsyncReadWrapper {
     rx: Receiver<u8>,
 }
 
-impl Reader {
-    fn new<R>(mut source: R) -> Self
-    where
-        R: AsyncRead + Send + Unpin + 'static,
-    {
-        let (mut tx, rx) = futures::channel::mpsc::channel(0);
-        tokio::spawn(async move {
-            let mut v = [0];
-            while source.read(&mut v).await.unwrap() == 1 {
-                if tx.send(v[0]).await.is_err() {
-                    break;
-                }
-            }
-        });
-        Self { rx }
-    }
-}
-
-impl Read for Reader {
+impl Read for AsyncReadWrapper {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.rx.is_terminated() {
+            return Ok(0);
+        }
         for (i, u) in buf.iter_mut().enumerate() {
             match futures::executor::block_on(self.rx.next()) {
                 Some(v) => *u = v,
@@ -43,26 +34,28 @@ impl Read for Reader {
     }
 }
 
-struct Writer {
+fn make_async_read_wrapper_and_worker<R>(
+    mut read: R,
+) -> (AsyncReadWrapper, impl Future<Output = ()>)
+where
+    R: AsyncRead + Unpin,
+{
+    let (mut tx, rx) = futures::channel::mpsc::channel(0);
+    (AsyncReadWrapper { rx }, async move {
+        let mut v = [0];
+        while !tx.is_closed() && read.read(&mut v).await.unwrap() == 1 {
+            if tx.send(v[0]).await.is_err() {
+                break;
+            }
+        }
+    })
+}
+
+struct AsyncWriteWrapper {
     tx: Sender<u8>,
 }
 
-impl Writer {
-    fn new<R>(mut target: R) -> Self
-    where
-        R: AsyncWrite + Send + Unpin + 'static,
-    {
-        let (tx, mut rx) = futures::channel::mpsc::channel(0);
-        tokio::spawn(async move {
-            while let Some(v) = rx.next().await {
-                target.write_all(&[v]).await.unwrap();
-            }
-        });
-        Self { tx }
-    }
-}
-
-impl Write for Writer {
+impl Write for AsyncWriteWrapper {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         for (i, u) in buf.iter().enumerate() {
             if futures::executor::block_on(self.tx.send(*u)).is_err() {
@@ -77,49 +70,86 @@ impl Write for Writer {
     }
 }
 
+fn make_async_write_wrapper_and_worker<W>(
+    mut write: W,
+) -> (AsyncWriteWrapper, impl Future<Output = ()>)
+where
+    W: AsyncWrite + Unpin,
+{
+    let (tx, mut rx) = futures::channel::mpsc::channel(0);
+    (AsyncWriteWrapper { tx }, async move {
+        while let Some(v) = rx.next().await {
+            write.write_all(&[v]).await.unwrap();
+        }
+    })
+}
+
+async fn wrap_async_read<R, F, T>(read: R, f: F) -> std::result::Result<T, JoinError>
+where
+    R: AsyncRead + Unpin,
+    F: FnOnce(AsyncReadWrapper) -> T + Send + 'static,
+    T: Send + 'static,
+{
+    let (async_read_wrapper, async_read_wrapper_worker) = make_async_read_wrapper_and_worker(read);
+    let h = tokio::task::spawn_blocking(move || f(async_read_wrapper));
+    Ok(join!(h, async_read_wrapper_worker).0?)
+}
+
+async fn wrap_async_read_and_write<R, W, F, T>(
+    read: R,
+    write: W,
+    f: F,
+) -> std::result::Result<T, JoinError>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+    F: FnOnce(AsyncReadWrapper, AsyncWriteWrapper) -> T + Send + 'static,
+    T: Send + 'static,
+{
+    let (async_read_wrapper, async_read_wrapper_worker) = make_async_read_wrapper_and_worker(read);
+    let (async_write_wrapper, async_write_wrapper_worker) =
+        make_async_write_wrapper_and_worker(write);
+    let h = tokio::task::spawn_blocking(move || f(async_read_wrapper, async_write_wrapper));
+    Ok(join!(h, async_read_wrapper_worker, async_write_wrapper_worker).0?)
+}
+
 pub async fn list_archive_files<R>(source: R) -> Result<Vec<String>>
 where
-    R: AsyncRead + Send + Unpin + 'static,
+    R: AsyncRead + Unpin,
 {
-    tokio::task::spawn_blocking(move || crate::list_archive_files(Reader::new(source))).await?
+    wrap_async_read(source, move |source| crate::list_archive_files(source)).await?
 }
 
 pub async fn uncompress_data<R, W>(source: R, target: W) -> Result<usize>
 where
-    R: AsyncRead + Send + Unpin + 'static,
-    W: AsyncWrite + Send + Unpin + 'static,
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
 {
-    tokio::task::spawn_blocking(move || {
-        crate::uncompress_data(Reader::new(source), Writer::new(target))
+    wrap_async_read_and_write(source, target, move |source, target| {
+        crate::uncompress_data(source, target)
     })
     .await?
 }
 
-pub async fn uncompress_archive<R>(
-    source: R,
-    dest: &'static Path,
-    ownership: Ownership,
-) -> Result<()>
+pub async fn uncompress_archive<R>(source: R, dest: &Path, ownership: Ownership) -> Result<()>
 where
-    R: AsyncRead + Send + Unpin + 'static,
+    R: AsyncRead + Unpin,
 {
-    tokio::task::spawn_blocking(move || {
-        crate::uncompress_archive(Reader::new(source), dest, ownership)
+    let dest = dest.to_owned();
+    wrap_async_read(source, move |source| {
+        crate::uncompress_archive(source, &dest, ownership)
     })
     .await?
 }
 
-pub async fn uncompress_archive_file<R, W>(
-    source: R,
-    target: W,
-    path: &'static str,
-) -> Result<usize>
+pub async fn uncompress_archive_file<R, W>(source: R, target: W, path: &str) -> Result<usize>
 where
-    R: AsyncRead + Send + Unpin + 'static,
-    W: AsyncWrite + Send + Unpin + 'static,
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
 {
-    tokio::task::spawn_blocking(move || {
-        crate::uncompress_archive_file(Reader::new(source), Writer::new(target), path)
+    let path = path.to_owned();
+    wrap_async_read_and_write(source, target, move |source, target| {
+        crate::uncompress_archive_file(source, target, &path)
     })
     .await?
 }

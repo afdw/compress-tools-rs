@@ -18,6 +18,25 @@ fn get_compressed_file_content() {
     assert_eq!(written, 18, "Uncompressed bytes count did not match");
 }
 
+#[tokio::test]
+#[cfg(feature = "tokio_support")]
+async fn async_get_compressed_file_content() {
+    let mut source = tokio::fs::File::open("tests/fixtures/file.txt.gz")
+        .await
+        .unwrap();
+    let mut target = Vec::default();
+
+    let written = tokio_support::uncompress_data(&mut source, &mut target)
+        .await
+        .expect("Failed to uncompress the file");
+    assert_eq!(
+        String::from_utf8_lossy(&target),
+        "some_file_content\n",
+        "Uncompressed file did not match",
+    );
+    assert_eq!(written, 18, "Uncompressed bytes count did not match");
+}
+
 #[test]
 fn get_a_file_from_tar() {
     let mut source = std::fs::File::open("tests/fixtures/tree.tar").unwrap();
@@ -25,6 +44,26 @@ fn get_a_file_from_tar() {
 
     let written = uncompress_archive_file(&mut source, &mut target, &"tree/branch2/leaf")
         .expect("Failed to get the file");
+    assert_eq!(
+        String::from_utf8_lossy(&target),
+        "Goodbye World\n",
+        "Uncompressed file did not match",
+    );
+    assert_eq!(written, 14, "Uncompressed bytes count did not match");
+}
+
+#[tokio::test]
+#[cfg(feature = "tokio_support")]
+async fn async_get_a_file_from_tar() {
+    let mut source = tokio::fs::File::open("tests/fixtures/tree.tar")
+        .await
+        .unwrap();
+    let mut target = Vec::default();
+
+    let written =
+        tokio_support::uncompress_archive_file(&mut source, &mut target, &"tree/branch2/leaf")
+            .await
+            .expect("Failed to get the file");
     assert_eq!(
         String::from_utf8_lossy(&target),
         "Goodbye World\n",
@@ -210,6 +249,33 @@ fn uncompress_same_file_not_preserve_owner() {
         Ownership::Ignore,
     )
     .expect("Failed to uncompress the file");
+}
+
+#[tokio::test]
+#[cfg(feature = "tokio_support")]
+async fn async_uncompress_same_file_not_preserve_owner() {
+    tokio_support::uncompress_archive(
+        &mut tokio::fs::File::open("tests/fixtures/tree.tar")
+            .await
+            .unwrap(),
+        tempfile::TempDir::new()
+            .expect("Failed to create the tmp directory")
+            .path(),
+        Ownership::Ignore,
+    )
+        .await
+        .expect("Failed to uncompress the file");
+    tokio_support::uncompress_archive(
+        &mut tokio::fs::File::open("tests/fixtures/tree.tar")
+            .await
+            .unwrap(),
+        tempfile::TempDir::new()
+            .expect("Failed to create the tmp directory")
+            .path(),
+        Ownership::Ignore,
+    )
+        .await
+        .expect("Failed to uncompress the file");
 }
 
 #[test]
