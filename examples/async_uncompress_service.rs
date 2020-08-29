@@ -1,5 +1,15 @@
+// Copyright (C) 2019, 2020 O.S. Systems Sofware LTDA
+//
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use compress_tools::tokio_support::uncompress_data;
 use tokio::net::TcpListener;
+
+/// Example usage:
+/// ```
+/// $ ncat localhost 1234 < tests/fixtures/file.txt.gz
+/// some_file_content
+/// ```
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

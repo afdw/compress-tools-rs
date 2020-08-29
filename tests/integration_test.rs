@@ -294,9 +294,12 @@ fn uncompress_truncated_archive() {
 async fn async_uncompress_truncated_archive() {
     assert!(matches!(
         tokio_support::uncompress_data(
-            tokio::fs::File::open("tests/fixtures/truncated.log.gz").await.unwrap(),
+            tokio::fs::File::open("tests/fixtures/truncated.log.gz")
+                .await
+                .unwrap(),
             Vec::new()
-        ).await,
+        )
+        .await,
         Err(Error::Unknown)
     ));
 }

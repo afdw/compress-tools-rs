@@ -4,7 +4,7 @@
 
 ### Added
 
-*
+* Optional tokio support
 
 ### Changed
 

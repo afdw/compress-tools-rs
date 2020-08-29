@@ -1,3 +1,7 @@
+// Copyright (C) 2019, 2020 O.S. Systems Sofware LTDA
+//
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use crate::{Ownership, Result};
 use futures::{
     channel::mpsc::{Receiver, Sender},
@@ -113,6 +117,9 @@ where
     Ok(join.0?)
 }
 
+/// Async version of [`list_archive_files`].
+///
+/// [`list_archive_files`]: ../fn.list_archive_files.html
 pub async fn list_archive_files<R>(source: R) -> Result<Vec<String>>
 where
     R: AsyncRead + Unpin,
@@ -120,6 +127,9 @@ where
     wrap_async_read(source, crate::list_archive_files).await?
 }
 
+/// Async version of [`uncompress_data`].
+///
+/// [`uncompress_data`]: ../fn.uncompress_data.html
 pub async fn uncompress_data<R, W>(source: R, target: W) -> Result<usize>
 where
     R: AsyncRead + Unpin,
@@ -131,6 +141,9 @@ where
     .await?
 }
 
+/// Async version of [`uncompress_archive`].
+///
+/// [`uncompress_archive`]: ../fn.uncompress_archive.html
 pub async fn uncompress_archive<R>(source: R, dest: &Path, ownership: Ownership) -> Result<()>
 where
     R: AsyncRead + Unpin,
@@ -142,6 +155,9 @@ where
     .await?
 }
 
+/// Async version of [`uncompress_archive_file`].
+///
+/// [`uncompress_archive_file`]: ../fn.uncompress_archive_file.html
 pub async fn uncompress_archive_file<R, W>(source: R, target: W, path: &str) -> Result<usize>
 where
     R: AsyncRead + Unpin,
