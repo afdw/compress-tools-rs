@@ -1,5 +1,5 @@
-use std::net::TcpListener;
 use compress_tools::uncompress_data;
+use std::net::TcpListener;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind("127.0.0.1:1234")?;

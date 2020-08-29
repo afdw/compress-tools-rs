@@ -10,10 +10,7 @@ use std::{
     io::{Read, Write},
     path::Path,
 };
-use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
-    task::JoinError,
-};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 struct AsyncReadWrapper {
     rx: Receiver<u8>,
@@ -36,18 +33,19 @@ impl Read for AsyncReadWrapper {
 
 fn make_async_read_wrapper_and_worker<R>(
     mut read: R,
-) -> (AsyncReadWrapper, impl Future<Output = ()>)
+) -> (AsyncReadWrapper, impl Future<Output = Result<()>>)
 where
     R: AsyncRead + Unpin,
 {
     let (mut tx, rx) = futures::channel::mpsc::channel(0);
     (AsyncReadWrapper { rx }, async move {
         let mut v = [0];
-        while !tx.is_closed() && read.read(&mut v).await.unwrap() == 1 {
+        while !tx.is_closed() && read.read(&mut v).await? == 1 {
             if tx.send(v[0]).await.is_err() {
                 break;
             }
         }
+        Ok(())
     })
 }
 
@@ -72,34 +70,33 @@ impl Write for AsyncWriteWrapper {
 
 fn make_async_write_wrapper_and_worker<W>(
     mut write: W,
-) -> (AsyncWriteWrapper, impl Future<Output = ()>)
+) -> (AsyncWriteWrapper, impl Future<Output = Result<()>>)
 where
     W: AsyncWrite + Unpin,
 {
     let (tx, mut rx) = futures::channel::mpsc::channel(0);
     (AsyncWriteWrapper { tx }, async move {
         while let Some(v) = rx.next().await {
-            write.write_all(&[v]).await.unwrap();
+            write.write_all(&[v]).await?;
         }
+        Ok(())
     })
 }
 
-async fn wrap_async_read<R, F, T>(read: R, f: F) -> std::result::Result<T, JoinError>
+async fn wrap_async_read<R, F, T>(read: R, f: F) -> Result<T>
 where
     R: AsyncRead + Unpin,
     F: FnOnce(AsyncReadWrapper) -> T + Send + 'static,
     T: Send + 'static,
 {
     let (async_read_wrapper, async_read_wrapper_worker) = make_async_read_wrapper_and_worker(read);
-    let h = tokio::task::spawn_blocking(move || f(async_read_wrapper));
-    Ok(join!(h, async_read_wrapper_worker).0?)
+    let g = tokio::task::spawn_blocking(move || f(async_read_wrapper));
+    let join = join!(g, async_read_wrapper_worker);
+    join.1?;
+    Ok(join.0?)
 }
 
-async fn wrap_async_read_and_write<R, W, F, T>(
-    read: R,
-    write: W,
-    f: F,
-) -> std::result::Result<T, JoinError>
+async fn wrap_async_read_and_write<R, W, F, T>(read: R, write: W, f: F) -> Result<T>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
@@ -109,8 +106,11 @@ where
     let (async_read_wrapper, async_read_wrapper_worker) = make_async_read_wrapper_and_worker(read);
     let (async_write_wrapper, async_write_wrapper_worker) =
         make_async_write_wrapper_and_worker(write);
-    let h = tokio::task::spawn_blocking(move || f(async_read_wrapper, async_write_wrapper));
-    Ok(join!(h, async_read_wrapper_worker, async_write_wrapper_worker).0?)
+    let g = tokio::task::spawn_blocking(move || f(async_read_wrapper, async_write_wrapper));
+    let join = join!(g, async_read_wrapper_worker, async_write_wrapper_worker);
+    join.1?;
+    join.2?;
+    Ok(join.0?)
 }
 
 pub async fn list_archive_files<R>(source: R) -> Result<Vec<String>>

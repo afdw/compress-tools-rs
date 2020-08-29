@@ -263,8 +263,8 @@ async fn async_uncompress_same_file_not_preserve_owner() {
             .path(),
         Ownership::Ignore,
     )
-        .await
-        .expect("Failed to uncompress the file");
+    .await
+    .expect("Failed to uncompress the file");
     tokio_support::uncompress_archive(
         &mut tokio::fs::File::open("tests/fixtures/tree.tar")
             .await
@@ -274,8 +274,8 @@ async fn async_uncompress_same_file_not_preserve_owner() {
             .path(),
         Ownership::Ignore,
     )
-        .await
-        .expect("Failed to uncompress the file");
+    .await
+    .expect("Failed to uncompress the file");
 }
 
 #[test]
@@ -285,6 +285,18 @@ fn uncompress_truncated_archive() {
             std::fs::File::open("tests/fixtures/truncated.log.gz").unwrap(),
             Vec::new()
         ),
+        Err(Error::Unknown)
+    ));
+}
+
+#[tokio::test]
+#[cfg(feature = "tokio_support")]
+async fn async_uncompress_truncated_archive() {
+    assert!(matches!(
+        tokio_support::uncompress_data(
+            tokio::fs::File::open("tests/fixtures/truncated.log.gz").await.unwrap(),
+            Vec::new()
+        ).await,
         Err(Error::Unknown)
     ));
 }
