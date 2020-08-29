@@ -2,9 +2,10 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-use crate::{Ownership, Result};
+use crate::{Ownership, Result, READER_BUFFER_SIZE};
 use futures::{
     channel::mpsc::{Receiver, Sender},
+    io::ErrorKind,
     join,
     stream::FusedStream,
     SinkExt, StreamExt,
@@ -17,21 +18,22 @@ use std::{
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 struct AsyncReadWrapper {
-    rx: Receiver<u8>,
+    rx: Receiver<Vec<u8>>,
 }
 
 impl Read for AsyncReadWrapper {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+    fn read(&mut self, mut buf: &mut [u8]) -> std::io::Result<usize> {
         if self.rx.is_terminated() {
             return Ok(0);
         }
-        for (i, u) in buf.iter_mut().enumerate() {
-            match futures::executor::block_on(self.rx.next()) {
-                Some(v) => *u = v,
-                None => return Ok(i),
+        assert_eq!(buf.len(), READER_BUFFER_SIZE);
+        Ok(match futures::executor::block_on(self.rx.next()) {
+            Some(data) => {
+                buf.write(&data)?;
+                data.len()
             }
-        }
-        Ok(buf.len())
+            None => 0,
+        })
     }
 }
 
@@ -43,9 +45,11 @@ where
 {
     let (mut tx, rx) = futures::channel::mpsc::channel(0);
     (AsyncReadWrapper { rx }, async move {
-        let mut v = [0];
-        while !tx.is_closed() && read.read(&mut v).await? == 1 {
-            if tx.send(v[0]).await.is_err() {
+        loop {
+            let mut data = vec![0; READER_BUFFER_SIZE];
+            let read = read.read(&mut data).await?;
+            data.truncate(read);
+            if read == 0 || tx.send(data).await.is_err() {
                 break;
             }
         }
@@ -54,21 +58,20 @@ where
 }
 
 struct AsyncWriteWrapper {
-    tx: Sender<u8>,
+    tx: Sender<Vec<u8>>,
 }
 
 impl Write for AsyncWriteWrapper {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        for (i, u) in buf.iter().enumerate() {
-            if futures::executor::block_on(self.tx.send(*u)).is_err() {
-                return Ok(i);
-            }
+        match futures::executor::block_on(self.tx.send(buf.to_owned())) {
+            Ok(()) => Ok(buf.len()),
+            Err(err) => Err(std::io::Error::new(ErrorKind::Other, err)),
         }
-        Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
+        futures::executor::block_on(self.tx.send(vec![]))
+            .map_err(|err| std::io::Error::new(ErrorKind::Other, err))
     }
 }
 
@@ -81,7 +84,11 @@ where
     let (tx, mut rx) = futures::channel::mpsc::channel(0);
     (AsyncWriteWrapper { tx }, async move {
         while let Some(v) = rx.next().await {
-            write.write_all(&[v]).await?;
+            if v.is_empty() {
+                write.flush().await?;
+            } else {
+                write.write_all(&v).await?;
+            }
         }
         Ok(())
     })

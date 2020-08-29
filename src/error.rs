@@ -21,7 +21,7 @@ pub enum Error {
     Utf(std::str::Utf8Error),
 
     #[cfg(feature = "tokio_support")]
-    #[display(fmt = "Join Error: '{}'", _0)]
+    #[display(fmt = "Join error: '{}'", _0)]
     JoinError(tokio::task::JoinError),
 
     #[display(fmt = "Error to create the archive struct, is null")]
