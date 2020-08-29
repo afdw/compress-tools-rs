@@ -29,7 +29,7 @@ impl Read for AsyncReadWrapper {
         assert_eq!(buf.len(), READER_BUFFER_SIZE);
         Ok(match futures::executor::block_on(self.rx.next()) {
             Some(data) => {
-                buf.write(&data)?;
+                buf.write_all(&data)?;
                 data.len()
             }
             None => 0,
