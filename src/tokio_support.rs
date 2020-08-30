@@ -6,7 +6,6 @@ use std::path::Path;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::compat::{Tokio02AsyncReadCompatExt, Tokio02AsyncWriteCompatExt};
 
-#[derive(Copy, Clone)]
 struct TokioBlockingExecutor {}
 
 #[async_trait]

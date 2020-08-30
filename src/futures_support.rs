@@ -5,7 +5,6 @@ use async_trait::async_trait;
 use futures::{AsyncRead, AsyncWrite};
 use std::path::Path;
 
-#[derive(Copy, Clone)]
 struct FuturesBlockingExecutor {}
 
 #[async_trait]
