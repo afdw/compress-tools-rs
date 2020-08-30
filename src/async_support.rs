@@ -24,7 +24,7 @@ use std::{
 pub trait BlockingExecutor {
     /// Execute the provided function on a thread where blocking is acceptable
     /// (in some kind of thread poll).
-    async fn execute_blocking<T, F>(&mut self, f: F) -> Result<T>
+    async fn execute_blocking<T, F>(self, f: F) -> Result<T>
     where
         T: Send + 'static,
         F: FnOnce() -> T + Send + 'static;
@@ -107,7 +107,7 @@ where
     })
 }
 
-async fn wrap_async_read<B, R, F, T>(mut blocking_executor: B, read: R, f: F) -> Result<T>
+async fn wrap_async_read<B, R, F, T>(blocking_executor: B, read: R, f: F) -> Result<T>
 where
     B: BlockingExecutor,
     R: AsyncRead + Unpin,
@@ -122,7 +122,7 @@ where
 }
 
 async fn wrap_async_read_and_write<B, R, W, F, T>(
-    mut blocking_executor: B,
+    blocking_executor: B,
     read: R,
     write: W,
     f: F,

@@ -11,7 +11,7 @@ struct TokioBlockingExecutor {}
 
 #[async_trait]
 impl BlockingExecutor for TokioBlockingExecutor {
-    async fn execute_blocking<T, F>(&mut self, f: F) -> Result<T>
+    async fn execute_blocking<T, F>(self, f: F) -> Result<T>
     where
         T: Send + 'static,
         F: FnOnce() -> T + Send + 'static,
@@ -20,7 +20,7 @@ impl BlockingExecutor for TokioBlockingExecutor {
     }
 }
 
-static TOKIO_BLOCKING_EXECUTOR: TokioBlockingExecutor = TokioBlockingExecutor {};
+const TOKIO_BLOCKING_EXECUTOR: TokioBlockingExecutor = TokioBlockingExecutor {};
 
 /// Async version of [`list_archive_files`](crate::list_archive_files).
 pub async fn list_archive_files<R>(source: R) -> Result<Vec<String>>

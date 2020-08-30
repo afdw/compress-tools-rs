@@ -10,7 +10,7 @@ struct FuturesBlockingExecutor {}
 
 #[async_trait]
 impl BlockingExecutor for FuturesBlockingExecutor {
-    async fn execute_blocking<T, F>(&mut self, f: F) -> Result<T>
+    async fn execute_blocking<T, F>(self, f: F) -> Result<T>
     where
         T: Send + 'static,
         F: FnOnce() -> T + Send + 'static,
@@ -19,7 +19,7 @@ impl BlockingExecutor for FuturesBlockingExecutor {
     }
 }
 
-static FUTURES_BLOCKING_EXECUTOR: FuturesBlockingExecutor = FuturesBlockingExecutor {};
+const FUTURES_BLOCKING_EXECUTOR: FuturesBlockingExecutor = FuturesBlockingExecutor {};
 
 /// Async version of [`list_archive_files`](crate::list_archive_files).
 pub async fn list_archive_files<R>(source: R) -> Result<Vec<String>>
