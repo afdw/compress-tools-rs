@@ -7,7 +7,14 @@
 * Optional async support
 * Uncompress service example and its async-std and Tokio counterparts
 
+### Removed
+
+* Removed `Error::NullEntry` as it is unused.
+
 ### Changed
+
+* Replaced `Error::FileNotFound` with `std::io::Error` using the
+  `std::io::ErrorKind::NotFound`.
 
 * Change error enum names to more meaninful ones. The following errors were
   renamed as:

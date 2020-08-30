@@ -1,4 +1,4 @@
-// Copyright (C) 2019, 2020 O.S. Systems Sofware LTDA
+// Copyright (C) 2019, 2020 O.S. Systems Software LTDA
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
@@ -61,7 +61,7 @@ use error::archive_result;
 pub use error::{Error, Result};
 use std::{
     ffi::{CStr, CString},
-    io::{Read, Write},
+    io::{self, Read, Write},
     os::raw::c_void,
     path::Path,
     slice,
@@ -278,7 +278,13 @@ where
                             break;
                         }
                     }
-                    ffi::ARCHIVE_EOF => return Err(Error::FileNotFound),
+                    ffi::ARCHIVE_EOF => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::NotFound,
+                            format!("path {} doesn't exist inside archive", path),
+                        )
+                        .into())
+                    }
                     _ => return Err(Error::from(archive_reader)),
                 }
             }
@@ -292,17 +298,16 @@ where
     F: FnOnce(*mut ffi::archive, *mut ffi::archive, *mut ffi::archive_entry) -> Result<T>,
     R: Read,
 {
-    let archive_reader: *mut ffi::archive;
-    let archive_writer: *mut ffi::archive;
-    let archive_entry: *mut ffi::archive_entry = std::ptr::null_mut();
-
     unsafe {
-        archive_reader = ffi::archive_read_new();
-        archive_writer = ffi::archive_write_disk_new();
+        let archive_entry: *mut ffi::archive_entry = std::ptr::null_mut();
+        let archive_reader = ffi::archive_read_new();
+        let archive_writer = ffi::archive_write_disk_new();
+
         archive_result(
             ffi::archive_read_support_filter_all(archive_reader),
             archive_reader,
         )?;
+
         match mode {
             Mode::RawFormat => archive_result(
                 ffi::archive_read_support_format_raw(archive_reader),
@@ -342,11 +347,7 @@ where
             }
         }
 
-        if archive_reader.is_null() {
-            return Err(Error::NullArchive);
-        }
-
-        if archive_writer.is_null() {
+        if archive_reader.is_null() || archive_writer.is_null() {
             return Err(Error::NullArchive);
         }
 
