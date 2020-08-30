@@ -5,6 +5,7 @@
 ### Added
 
 * Optional tokio support
+* Uncompress service example and its async counterpart
 
 ### Changed
 
