@@ -48,8 +48,12 @@
 //! # }
 //! ```
 
+#[cfg(feature = "async_support")]
+pub mod async_support;
 mod error;
 mod ffi;
+#[cfg(feature = "futures_support")]
+pub mod futures_support;
 #[cfg(feature = "tokio_support")]
 pub mod tokio_support;
 

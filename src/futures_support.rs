@@ -1,33 +1,32 @@
-//! Async support that uses [`tokio::task::spawn_blocking`] and its I/O traits.
+//! Async support with a built-in thread poll.
 
 use crate::{async_support, async_support::BlockingExecutor, Ownership, Result};
 use async_trait::async_trait;
+use futures::{AsyncRead, AsyncWrite};
 use std::path::Path;
-use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_util::compat::{Tokio02AsyncReadCompatExt, Tokio02AsyncWriteCompatExt};
 
 #[derive(Copy, Clone)]
-struct TokioBlockingExecutor {}
+struct FuturesBlockingExecutor {}
 
 #[async_trait]
-impl BlockingExecutor for TokioBlockingExecutor {
+impl BlockingExecutor for FuturesBlockingExecutor {
     async fn execute_blocking<T, F>(&mut self, f: F) -> Result<T>
     where
         T: Send + 'static,
         F: FnOnce() -> T + Send + 'static,
     {
-        tokio::task::spawn_blocking(f).await.map_err(Into::into)
+        Ok(blocking::unblock(f).await)
     }
 }
 
-static TOKIO_BLOCKING_EXECUTOR: TokioBlockingExecutor = TokioBlockingExecutor {};
+static FUTURES_BLOCKING_EXECUTOR: FuturesBlockingExecutor = FuturesBlockingExecutor {};
 
 /// Async version of [`list_archive_files`](crate::list_archive_files).
 pub async fn list_archive_files<R>(source: R) -> Result<Vec<String>>
 where
     R: AsyncRead + Unpin,
 {
-    async_support::list_archive_files(TOKIO_BLOCKING_EXECUTOR, source.compat()).await
+    async_support::list_archive_files(FUTURES_BLOCKING_EXECUTOR, source).await
 }
 
 /// Async version of [`uncompress_data`](crate::uncompress_data).
@@ -36,12 +35,7 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    async_support::uncompress_data(
-        TOKIO_BLOCKING_EXECUTOR,
-        source.compat(),
-        target.compat_write(),
-    )
-    .await
+    async_support::uncompress_data(FUTURES_BLOCKING_EXECUTOR, source, target).await
 }
 
 /// Async version of [`uncompress_archive`](crate::uncompress_archive).
@@ -49,8 +43,7 @@ pub async fn uncompress_archive<R>(source: R, dest: &Path, ownership: Ownership)
 where
     R: AsyncRead + Unpin,
 {
-    async_support::uncompress_archive(TOKIO_BLOCKING_EXECUTOR, source.compat(), dest, ownership)
-        .await
+    async_support::uncompress_archive(FUTURES_BLOCKING_EXECUTOR, source, dest, ownership).await
 }
 
 /// Async version of
@@ -60,11 +53,5 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    async_support::uncompress_archive_file(
-        TOKIO_BLOCKING_EXECUTOR,
-        source.compat(),
-        target.compat_write(),
-        path,
-    )
-    .await
+    async_support::uncompress_archive_file(FUTURES_BLOCKING_EXECUTOR, source, target, path).await
 }
