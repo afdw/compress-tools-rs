@@ -10,7 +10,7 @@ struct TokioBlockingExecutor {}
 
 #[async_trait]
 impl BlockingExecutor for TokioBlockingExecutor {
-    async fn execute_blocking<T, F>(self, f: F) -> Result<T>
+    async fn execute_blocking<T, F>(f: F) -> Result<T>
     where
         T: Send + 'static,
         F: FnOnce() -> T + Send + 'static,

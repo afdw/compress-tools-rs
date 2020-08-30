@@ -24,7 +24,7 @@ use std::{
 pub trait BlockingExecutor {
     /// Execute the provided function on a thread where blocking is acceptable
     /// (in some kind of thread poll).
-    async fn execute_blocking<T, F>(self, f: F) -> Result<T>
+    async fn execute_blocking<T, F>(f: F) -> Result<T>
     where
         T: Send + 'static,
         F: FnOnce() -> T + Send + 'static;
@@ -107,7 +107,7 @@ where
     })
 }
 
-async fn wrap_async_read<B, R, F, T>(blocking_executor: B, read: R, f: F) -> Result<T>
+async fn wrap_async_read<B, R, F, T>(_: B, read: R, f: F) -> Result<T>
 where
     B: BlockingExecutor,
     R: AsyncRead + Unpin,
@@ -115,18 +115,13 @@ where
     T: Send + 'static,
 {
     let (async_read_wrapper, async_read_wrapper_worker) = make_async_read_wrapper_and_worker(read);
-    let g = blocking_executor.execute_blocking(move || f(async_read_wrapper));
+    let g = B::execute_blocking(move || f(async_read_wrapper));
     let join = join!(async_read_wrapper_worker, g);
     join.0?;
     join.1
 }
 
-async fn wrap_async_read_and_write<B, R, W, F, T>(
-    blocking_executor: B,
-    read: R,
-    write: W,
-    f: F,
-) -> Result<T>
+async fn wrap_async_read_and_write<B, R, W, F, T>(_: B, read: R, write: W, f: F) -> Result<T>
 where
     B: BlockingExecutor,
     R: AsyncRead + Unpin,
@@ -137,7 +132,7 @@ where
     let (async_read_wrapper, async_read_wrapper_worker) = make_async_read_wrapper_and_worker(read);
     let (async_write_wrapper, async_write_wrapper_worker) =
         make_async_write_wrapper_and_worker(write);
-    let g = blocking_executor.execute_blocking(move || f(async_read_wrapper, async_write_wrapper));
+    let g = B::execute_blocking(move || f(async_read_wrapper, async_write_wrapper));
     let join = join!(async_read_wrapper_worker, async_write_wrapper_worker, g);
     join.0?;
     join.1?;
