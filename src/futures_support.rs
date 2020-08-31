@@ -1,4 +1,4 @@
-//! Async support with a built-in thread poll.
+//! Async support with a built-in thread pool.
 
 use crate::{async_support, async_support::BlockingExecutor, Ownership, Result};
 use async_trait::async_trait;
