@@ -7,16 +7,19 @@
 
 use crate::{Ownership, Result, READER_BUFFER_SIZE};
 use async_trait::async_trait;
-use futures::{
-    channel::mpsc::{Receiver, Sender},
-    io::ErrorKind,
+use futures_channel::mpsc::{channel, Receiver, Sender};
+use futures_core::FusedStream;
+use futures_executor::block_on;
+use futures_io::{AsyncRead, AsyncWrite};
+use futures_util::{
+    io::{AsyncReadExt, AsyncWriteExt},
     join,
-    stream::FusedStream,
-    AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, SinkExt, StreamExt,
+    sink::SinkExt,
+    stream::StreamExt,
 };
 use std::{
     future::Future,
-    io::{Read, Write},
+    io::{ErrorKind, Read, Write},
     path::Path,
 };
 
@@ -40,7 +43,7 @@ impl Read for AsyncReadWrapper {
             return Ok(0);
         }
         assert_eq!(buf.len(), READER_BUFFER_SIZE);
-        Ok(match futures::executor::block_on(self.rx.next()) {
+        Ok(match block_on(self.rx.next()) {
             Some(data) => {
                 buf.write_all(&data)?;
                 data.len()
@@ -56,7 +59,7 @@ fn make_async_read_wrapper_and_worker<R>(
 where
     R: AsyncRead + Unpin,
 {
-    let (mut tx, rx) = futures::channel::mpsc::channel(0);
+    let (mut tx, rx) = channel(0);
     (AsyncReadWrapper { rx }, async move {
         loop {
             let mut data = vec![0; READER_BUFFER_SIZE];
@@ -76,15 +79,14 @@ struct AsyncWriteWrapper {
 
 impl Write for AsyncWriteWrapper {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        match futures::executor::block_on(self.tx.send(buf.to_owned())) {
+        match block_on(self.tx.send(buf.to_owned())) {
             Ok(()) => Ok(buf.len()),
             Err(err) => Err(std::io::Error::new(ErrorKind::Other, err)),
         }
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        futures::executor::block_on(self.tx.send(vec![]))
-            .map_err(|err| std::io::Error::new(ErrorKind::Other, err))
+        block_on(self.tx.send(vec![])).map_err(|err| std::io::Error::new(ErrorKind::Other, err))
     }
 }
 
@@ -94,7 +96,7 @@ fn make_async_write_wrapper_and_worker<W>(
 where
     W: AsyncWrite + Unpin,
 {
-    let (tx, mut rx) = futures::channel::mpsc::channel(0);
+    let (tx, mut rx) = channel(0);
     (AsyncWriteWrapper { tx }, async move {
         while let Some(v) = rx.next().await {
             if v.is_empty() {

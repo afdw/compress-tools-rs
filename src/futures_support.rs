@@ -2,7 +2,7 @@
 
 use crate::{async_support, async_support::BlockingExecutor, Ownership, Result};
 use async_trait::async_trait;
-use futures::{AsyncRead, AsyncWrite};
+use futures_io::{AsyncRead, AsyncWrite};
 use std::path::Path;
 
 struct FuturesBlockingExecutor {}
