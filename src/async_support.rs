@@ -26,7 +26,7 @@ use std::{
 #[async_trait]
 pub trait BlockingExecutor {
     /// Execute the provided function on a thread where blocking is acceptable
-    /// (in some kind of thread poll).
+    /// (in some kind of thread pool).
     async fn execute_blocking<T, F>(f: F) -> Result<T>
     where
         T: Send + 'static,
