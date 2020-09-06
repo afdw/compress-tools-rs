@@ -60,10 +60,12 @@ pub mod tokio_support;
 use error::archive_result;
 pub use error::{Error, Result};
 use std::{
+    cell::Cell,
     ffi::{CStr, CString},
     io::{self, Read, Write},
     os::raw::c_void,
     path::Path,
+    rc::Rc,
     slice,
 };
 
@@ -91,16 +93,31 @@ enum Mode {
 
 pub struct Entry {
     inner: ArchiveEntry,
+    open_archive_archive_reader: *mut ffi::archive,
+    valid: Rc<Cell<bool>>,
 }
 
 impl Entry {
     fn path(&self) -> Result<&str> {
         Ok(self.inner.pathname()?.unwrap())
     }
+
+    fn write<W>(&mut self, target: W) -> Result<usize>
+    where
+        W: Write,
+    {
+        if self.valid.get() {
+            self.valid.set(false);
+            unsafe { libarchive_write_data_block(self.open_archive_archive_reader, target) }
+        } else {
+            Err(Error::NullArchive)
+        }
+    }
 }
 
 pub struct ArchiveIterator<'a> {
-    open_archive: Box<OpenArchive<'a>>,
+    open_archive: Option<Box<OpenArchive<'a>>>,
+    last_entry_valid: Option<Rc<Cell<bool>>>,
 }
 
 impl<'a> Iterator for ArchiveIterator<'a> {
@@ -108,16 +125,35 @@ impl<'a> Iterator for ArchiveIterator<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         unsafe {
-            let archive_entry = ArchiveEntry::new();
-            match ffi::archive_read_next_header2(
-                self.open_archive.archive_reader,
-                archive_entry.inner,
-            ) {
-                ffi::ARCHIVE_OK => Some(Ok(Entry {
-                    inner: archive_entry,
-                })),
-                ffi::ARCHIVE_EOF => None,
-                _ => Some(Err(Error::from(self.open_archive.archive_reader))),
+            if let Some(open_archive) = &mut self.open_archive {
+                if let Some(last_entry_valid) = &self.last_entry_valid {
+                    last_entry_valid.set(false);
+                    self.last_entry_valid = None;
+                }
+                let archive_entry = ArchiveEntry::new();
+                match ffi::archive_read_next_header2(
+                    open_archive.archive_reader,
+                    archive_entry.inner,
+                ) {
+                    ffi::ARCHIVE_OK => {
+                        self.last_entry_valid = Some(Rc::new(Cell::new(true)));
+                        Some(Ok(Entry {
+                            inner: archive_entry,
+                            open_archive_archive_reader: open_archive.archive_reader,
+                            valid: self.last_entry_valid.clone().unwrap(),
+                        }))
+                    }
+                    ffi::ARCHIVE_EOF => {
+                        if let Err(err) = self.open_archive.take().unwrap().destroy() {
+                            Some(Err(err))
+                        } else {
+                            None
+                        }
+                    }
+                    _ => Some(Err(Error::from(open_archive.archive_reader))),
+                }
+            } else {
+                None
             }
         }
     }
@@ -129,7 +165,8 @@ where
 {
     let open_archive = OpenArchive::create(Mode::AllFormat, source)?;
     Ok(ArchiveIterator {
-        open_archive: Box::new(open_archive),
+        open_archive: Some(Box::new(open_archive)),
+        last_entry_valid: None,
     })
 }
 
@@ -152,7 +189,7 @@ where
     R: Read,
 {
     archive_iter(&mut source)?
-        .map(|result| result.and_then(|entry| entry.path().map(str::to_owned)))
+        .map(|entry| entry.and_then(|entry| entry.path().map(str::to_owned)))
         .collect()
 }
 
@@ -280,28 +317,17 @@ where
     R: Read,
     W: Write,
 {
-    let open_archive = OpenArchive::create(Mode::AllFormat, &mut source)?;
-    let archive_entry = ArchiveEntry::new();
-    open_archive.run_and_destroy(|open_archive| unsafe {
-        loop {
-            match ffi::archive_read_next_header2(open_archive.archive_reader, archive_entry.inner) {
-                ffi::ARCHIVE_OK => {
-                    if archive_entry.pathname().unwrap() == Some(path) {
-                        break;
-                    }
-                }
-                ffi::ARCHIVE_EOF => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::NotFound,
-                        format!("path {} doesn't exist inside archive", path),
-                    )
-                    .into())
-                }
-                _ => return Err(Error::from(open_archive.archive_reader)),
-            }
+    for entry in archive_iter(&mut source)? {
+        let mut entry = entry?;
+        if entry.path()? == path {
+            return entry.write(target);
         }
-        libarchive_write_data_block(open_archive.archive_reader, target)
-    })
+    }
+    Err(io::Error::new(
+        io::ErrorKind::NotFound,
+        format!("path {} doesn't exist inside archive", path),
+    )
+    .into())
 }
 
 struct OpenArchive<'a> {
