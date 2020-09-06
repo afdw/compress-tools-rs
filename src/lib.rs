@@ -114,11 +114,7 @@ where
         loop {
             match ffi::archive_read_next_header2(open_archive.archive_reader, archive_entry.inner) {
                 ffi::ARCHIVE_OK => {
-                    file_list.push(
-                        CStr::from_ptr(ffi::archive_entry_pathname(archive_entry.inner))
-                            .to_str()?
-                            .to_string(),
-                    );
+                    file_list.push(archive_entry.pathname()?.unwrap().to_owned());
                 }
                 ffi::ARCHIVE_EOF => return Ok(file_list),
                 _ => return Err(Error::from(open_archive.archive_reader)),
@@ -203,26 +199,12 @@ where
             match ffi::archive_read_next_header2(open_archive.archive_reader, archive_entry.inner) {
                 ffi::ARCHIVE_EOF => return Ok(()),
                 ffi::ARCHIVE_OK => {
-                    let target_path = dest.join(
-                        CStr::from_ptr(ffi::archive_entry_pathname(archive_entry.inner))
-                            .to_str()?,
-                    );
-                    ffi::archive_entry_set_pathname(
-                        archive_entry.inner,
-                        CString::new(target_path.to_str().unwrap())
-                            .unwrap()
-                            .into_raw(),
-                    );
+                    if let Some(pathname) = archive_entry.pathname()? {
+                        archive_entry.set_pathname(Some(dest.join(pathname).to_str().unwrap()));
+                    }
 
-                    let link_name = ffi::archive_entry_hardlink(archive_entry.inner);
-                    if !link_name.is_null() {
-                        let target_path = dest.join(CStr::from_ptr(link_name).to_str()?);
-                        ffi::archive_entry_set_hardlink(
-                            archive_entry.inner,
-                            CString::new(target_path.to_str().unwrap())
-                                .unwrap()
-                                .into_raw(),
-                        );
+                    if let Some(hardlink) = archive_entry.hardlink()? {
+                        archive_entry.set_hardlink(Some(dest.join(hardlink).to_str().unwrap()));
                     }
 
                     ffi::archive_write_header(open_archive.archive_writer, archive_entry.inner);
@@ -269,10 +251,7 @@ where
         loop {
             match ffi::archive_read_next_header2(open_archive.archive_reader, archive_entry.inner) {
                 ffi::ARCHIVE_OK => {
-                    let file_name =
-                        CStr::from_ptr(ffi::archive_entry_pathname(archive_entry.inner))
-                            .to_str()?;
-                    if file_name == path {
+                    if archive_entry.pathname().unwrap() == Some(path) {
                         break;
                     }
                 }
@@ -418,6 +397,54 @@ impl ArchiveEntry {
     fn new() -> Self {
         Self {
             inner: unsafe { ffi::archive_entry_new() },
+        }
+    }
+
+    fn pathname(&self) -> Result<Option<&str>> {
+        unsafe {
+            let ptr = ffi::archive_entry_pathname(self.inner);
+            if ptr.is_null() {
+                Ok(None)
+            } else {
+                Ok(Some(CStr::from_ptr(ptr).to_str()?))
+            }
+        }
+    }
+
+    fn set_pathname(&self, pathname: Option<&str>) {
+        unsafe {
+            ffi::archive_entry_set_pathname(
+                self.inner,
+                if let Some(pathname) = pathname {
+                    CString::new(pathname).unwrap().into_raw()
+                } else {
+                    std::ptr::null()
+                },
+            );
+        }
+    }
+
+    fn hardlink(&self) -> Result<Option<&str>> {
+        unsafe {
+            let ptr = ffi::archive_entry_hardlink(self.inner);
+            if ptr.is_null() {
+                Ok(None)
+            } else {
+                Ok(Some(CStr::from_ptr(ptr).to_str()?))
+            }
+        }
+    }
+
+    fn set_hardlink(&self, hardlink: Option<&str>) {
+        unsafe {
+            ffi::archive_entry_set_hardlink(
+                self.inner,
+                if let Some(hardlink) = hardlink {
+                    CString::new(hardlink).unwrap().into_raw()
+                } else {
+                    std::ptr::null()
+                },
+            );
         }
     }
 }
