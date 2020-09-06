@@ -66,9 +66,9 @@ extern "C" {
     ) -> ::std::os::raw::c_int;
 }
 extern "C" {
-    pub fn archive_read_next_header(
+    pub fn archive_read_next_header2(
         arg1: *mut archive,
-        arg2: *mut *mut archive_entry,
+        arg2: *mut archive_entry,
     ) -> ::std::os::raw::c_int;
 }
 extern "C" {
@@ -136,6 +136,9 @@ extern "C" {
 }
 extern "C" {
     pub fn archive_entry_free(arg1: *mut archive_entry);
+}
+extern "C" {
+    pub fn archive_entry_new() -> *mut archive_entry;
 }
 extern "C" {
     pub fn archive_entry_hardlink(arg1: *mut archive_entry) -> *const ::std::os::raw::c_char;

@@ -80,7 +80,7 @@ pub enum Ownership {
 
 struct Pipe<'a> {
     reader: &'a mut dyn Read,
-    buffer: &'a mut [u8],
+    buffer: [u8; READER_BUFFER_SIZE],
 }
 
 enum Mode {
@@ -103,30 +103,28 @@ enum Mode {
 /// # Ok(())
 /// # }
 /// ```
-pub fn list_archive_files<R>(source: R) -> Result<Vec<String>>
+pub fn list_archive_files<R>(mut source: R) -> Result<Vec<String>>
 where
     R: Read,
 {
-    run_with_archive(
-        Mode::AllFormat,
-        source,
-        |archive_reader, _, mut entry| unsafe {
-            let mut file_list = Vec::new();
-            loop {
-                match ffi::archive_read_next_header(archive_reader, &mut entry) {
-                    ffi::ARCHIVE_OK => {
-                        file_list.push(
-                            CStr::from_ptr(ffi::archive_entry_pathname(entry))
-                                .to_str()?
-                                .to_string(),
-                        );
-                    }
-                    ffi::ARCHIVE_EOF => return Ok(file_list),
-                    _ => return Err(Error::from(archive_reader)),
+    let open_archive = OpenArchive::create(Mode::AllFormat, &mut source)?;
+    let archive_entry = ArchiveEntry::new();
+    open_archive.run_and_destroy(|open_archive| unsafe {
+        let mut file_list = Vec::new();
+        loop {
+            match ffi::archive_read_next_header2(open_archive.archive_reader, archive_entry.inner) {
+                ffi::ARCHIVE_OK => {
+                    file_list.push(
+                        CStr::from_ptr(ffi::archive_entry_pathname(archive_entry.inner))
+                            .to_str()?
+                            .to_string(),
+                    );
                 }
+                ffi::ARCHIVE_EOF => return Ok(file_list),
+                _ => return Err(Error::from(open_archive.archive_reader)),
             }
-        },
-    )
+        }
+    })
 }
 
 /// Uncompress a file using the `source` need as reader and the `target` as a
@@ -160,22 +158,20 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub fn uncompress_data<R, W>(source: R, target: W) -> Result<usize>
+pub fn uncompress_data<R, W>(mut source: R, target: W) -> Result<usize>
 where
     R: Read,
     W: Write,
 {
-    run_with_archive(
-        Mode::RawFormat,
-        source,
-        |archive_reader, _, mut entry| unsafe {
-            archive_result(
-                ffi::archive_read_next_header(archive_reader, &mut entry),
-                archive_reader,
-            )?;
-            libarchive_write_data_block(archive_reader, target)
-        },
-    )
+    let open_archive = OpenArchive::create(Mode::RawFormat, &mut source)?;
+    let archive_entry = ArchiveEntry::new();
+    open_archive.run_and_destroy(|open_archive| unsafe {
+        archive_result(
+            ffi::archive_read_next_header2(open_archive.archive_reader, archive_entry.inner),
+            open_archive.archive_reader,
+        )?;
+        libarchive_write_data_block(open_archive.archive_reader, target)
+    })
 }
 
 /// Uncompress an archive using `source` as a reader and `dest` as the
@@ -196,50 +192,52 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub fn uncompress_archive<R>(source: R, dest: &Path, ownership: Ownership) -> Result<()>
+pub fn uncompress_archive<R>(mut source: R, dest: &Path, ownership: Ownership) -> Result<()>
 where
     R: Read,
 {
-    run_with_archive(
-        Mode::WriteDisk { ownership },
-        source,
-        |archive_reader, archive_writer, mut entry| unsafe {
-            loop {
-                match ffi::archive_read_next_header(archive_reader, &mut entry) {
-                    ffi::ARCHIVE_EOF => return Ok(()),
-                    ffi::ARCHIVE_OK => {
-                        let target_path =
-                            dest.join(CStr::from_ptr(ffi::archive_entry_pathname(entry)).to_str()?);
-                        ffi::archive_entry_set_pathname(
-                            entry,
+    let open_archive = OpenArchive::create(Mode::WriteDisk { ownership }, &mut source)?;
+    let archive_entry = ArchiveEntry::new();
+    open_archive.run_and_destroy(|open_archive| unsafe {
+        loop {
+            match ffi::archive_read_next_header2(open_archive.archive_reader, archive_entry.inner) {
+                ffi::ARCHIVE_EOF => return Ok(()),
+                ffi::ARCHIVE_OK => {
+                    let target_path = dest.join(
+                        CStr::from_ptr(ffi::archive_entry_pathname(archive_entry.inner))
+                            .to_str()?,
+                    );
+                    ffi::archive_entry_set_pathname(
+                        archive_entry.inner,
+                        CString::new(target_path.to_str().unwrap())
+                            .unwrap()
+                            .into_raw(),
+                    );
+
+                    let link_name = ffi::archive_entry_hardlink(archive_entry.inner);
+                    if !link_name.is_null() {
+                        let target_path = dest.join(CStr::from_ptr(link_name).to_str()?);
+                        ffi::archive_entry_set_hardlink(
+                            archive_entry.inner,
                             CString::new(target_path.to_str().unwrap())
                                 .unwrap()
                                 .into_raw(),
                         );
-
-                        let link_name = ffi::archive_entry_hardlink(entry);
-                        if !link_name.is_null() {
-                            let target_path = dest.join(CStr::from_ptr(link_name).to_str()?);
-                            ffi::archive_entry_set_hardlink(
-                                entry,
-                                CString::new(target_path.to_str().unwrap())
-                                    .unwrap()
-                                    .into_raw(),
-                            );
-                        }
-
-                        ffi::archive_write_header(archive_writer, entry);
-                        libarchive_copy_data(archive_reader, archive_writer)?;
-
-                        if ffi::archive_write_finish_entry(archive_writer) != ffi::ARCHIVE_OK {
-                            return Err(Error::from(archive_writer));
-                        }
                     }
-                    _ => return Err(Error::from(archive_reader)),
+
+                    ffi::archive_write_header(open_archive.archive_writer, archive_entry.inner);
+                    libarchive_copy_data(open_archive.archive_reader, open_archive.archive_writer)?;
+
+                    if ffi::archive_write_finish_entry(open_archive.archive_writer)
+                        != ffi::ARCHIVE_OK
+                    {
+                        return Err(Error::from(open_archive.archive_writer));
+                    }
                 }
+                _ => return Err(Error::from(open_archive.archive_reader)),
             }
-        },
-    )
+        }
+    })
 }
 
 /// Uncompress a specific file from an archive. The `source` is used as a
@@ -260,122 +258,173 @@ where
 /// # Ok(())
 /// # }
 /// ```
-pub fn uncompress_archive_file<R, W>(source: R, target: W, path: &str) -> Result<usize>
+pub fn uncompress_archive_file<R, W>(mut source: R, target: W, path: &str) -> Result<usize>
 where
     R: Read,
     W: Write,
 {
-    run_with_archive(
-        Mode::AllFormat,
-        source,
-        |archive_reader, _, mut entry| unsafe {
-            loop {
-                match ffi::archive_read_next_header(archive_reader, &mut entry) {
-                    ffi::ARCHIVE_OK => {
-                        let file_name =
-                            CStr::from_ptr(ffi::archive_entry_pathname(entry)).to_str()?;
-                        if file_name == path {
-                            break;
-                        }
+    let open_archive = OpenArchive::create(Mode::AllFormat, &mut source)?;
+    let archive_entry = ArchiveEntry::new();
+    open_archive.run_and_destroy(|open_archive| unsafe {
+        loop {
+            match ffi::archive_read_next_header2(open_archive.archive_reader, archive_entry.inner) {
+                ffi::ARCHIVE_OK => {
+                    let file_name =
+                        CStr::from_ptr(ffi::archive_entry_pathname(archive_entry.inner))
+                            .to_str()?;
+                    if file_name == path {
+                        break;
                     }
-                    ffi::ARCHIVE_EOF => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::NotFound,
-                            format!("path {} doesn't exist inside archive", path),
-                        )
-                        .into())
-                    }
-                    _ => return Err(Error::from(archive_reader)),
                 }
+                ffi::ARCHIVE_EOF => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("path {} doesn't exist inside archive", path),
+                    )
+                    .into())
+                }
+                _ => return Err(Error::from(open_archive.archive_reader)),
             }
-            libarchive_write_data_block(archive_reader, target)
-        },
-    )
+        }
+        libarchive_write_data_block(open_archive.archive_reader, target)
+    })
 }
 
-fn run_with_archive<F, R, T>(mode: Mode, mut reader: R, f: F) -> Result<T>
-where
-    F: FnOnce(*mut ffi::archive, *mut ffi::archive, *mut ffi::archive_entry) -> Result<T>,
-    R: Read,
-{
-    unsafe {
-        let archive_entry: *mut ffi::archive_entry = std::ptr::null_mut();
-        let archive_reader = ffi::archive_read_new();
-        let archive_writer = ffi::archive_write_disk_new();
+struct OpenArchive<'a> {
+    archive_reader: *mut ffi::archive,
+    archive_writer: *mut ffi::archive,
+    pipe: Box<Pipe<'a>>,
+}
 
-        archive_result(
-            ffi::archive_read_support_filter_all(archive_reader),
-            archive_reader,
-        )?;
+impl<'a> OpenArchive<'a> {
+    fn create<R>(mode: Mode, reader: &'a mut R) -> Result<Self>
+    where
+        R: Read,
+    {
+        unsafe {
+            let archive_reader = ffi::archive_read_new();
+            let archive_writer = ffi::archive_write_disk_new();
 
-        match mode {
-            Mode::RawFormat => archive_result(
-                ffi::archive_read_support_format_raw(archive_reader),
+            archive_result(
+                ffi::archive_read_support_filter_all(archive_reader),
                 archive_reader,
-            )?,
-            Mode::AllFormat => archive_result(
-                ffi::archive_read_support_format_all(archive_reader),
-                archive_reader,
-            )?,
-            Mode::WriteDisk { ownership } => {
-                let mut writer_flags = ffi::ARCHIVE_EXTRACT_TIME
-                    | ffi::ARCHIVE_EXTRACT_PERM
-                    | ffi::ARCHIVE_EXTRACT_ACL
-                    | ffi::ARCHIVE_EXTRACT_FFLAGS
-                    | ffi::ARCHIVE_EXTRACT_XATTR;
+            )?;
 
-                if let Ownership::Preserve = ownership {
-                    writer_flags |= ffi::ARCHIVE_EXTRACT_OWNER;
-                };
-
-                archive_result(
-                    ffi::archive_write_disk_set_options(archive_writer, writer_flags as i32),
-                    archive_writer,
-                )?;
-                archive_result(
-                    ffi::archive_write_disk_set_standard_lookup(archive_writer),
-                    archive_writer,
-                )?;
-                archive_result(
-                    ffi::archive_read_support_format_all(archive_reader),
-                    archive_reader,
-                )?;
-                archive_result(
+            match mode {
+                Mode::RawFormat => archive_result(
                     ffi::archive_read_support_format_raw(archive_reader),
                     archive_reader,
-                )?;
+                )?,
+                Mode::AllFormat => archive_result(
+                    ffi::archive_read_support_format_all(archive_reader),
+                    archive_reader,
+                )?,
+                Mode::WriteDisk { ownership } => {
+                    let mut writer_flags = ffi::ARCHIVE_EXTRACT_TIME
+                        | ffi::ARCHIVE_EXTRACT_PERM
+                        | ffi::ARCHIVE_EXTRACT_ACL
+                        | ffi::ARCHIVE_EXTRACT_FFLAGS
+                        | ffi::ARCHIVE_EXTRACT_XATTR;
+
+                    if let Ownership::Preserve = ownership {
+                        writer_flags |= ffi::ARCHIVE_EXTRACT_OWNER;
+                    };
+
+                    archive_result(
+                        ffi::archive_write_disk_set_options(archive_writer, writer_flags as i32),
+                        archive_writer,
+                    )?;
+                    archive_result(
+                        ffi::archive_write_disk_set_standard_lookup(archive_writer),
+                        archive_writer,
+                    )?;
+                    archive_result(
+                        ffi::archive_read_support_format_all(archive_reader),
+                        archive_reader,
+                    )?;
+                    archive_result(
+                        ffi::archive_read_support_format_raw(archive_reader),
+                        archive_reader,
+                    )?;
+                }
             }
-        }
 
-        if archive_reader.is_null() || archive_writer.is_null() {
-            return Err(Error::NullArchive);
-        }
+            if archive_reader.is_null() || archive_writer.is_null() {
+                return Err(Error::NullArchive);
+            }
 
-        let mut pipe = Pipe {
-            reader: &mut reader,
-            buffer: &mut [0; READER_BUFFER_SIZE],
-        };
+            let mut pipe = Box::new(Pipe {
+                reader,
+                buffer: [0; READER_BUFFER_SIZE],
+            });
 
-        archive_result(
-            ffi::archive_read_open(
+            archive_result(
+                ffi::archive_read_open(
+                    archive_reader,
+                    pipe.as_mut() as *mut _ as *mut _,
+                    None,
+                    Some(libarchive_read_callback),
+                    None,
+                ),
                 archive_reader,
-                (&mut pipe as *mut Pipe) as *mut c_void,
-                None,
-                Some(libarchive_read_callback),
-                None,
-            ),
-            archive_reader,
-        )?;
+            )?;
 
-        let res = f(archive_reader, archive_writer, archive_entry)?;
+            Ok(OpenArchive {
+                archive_reader,
+                archive_writer,
+                pipe,
+            })
+        }
+    }
 
-        archive_result(ffi::archive_read_close(archive_reader), archive_reader)?;
-        archive_result(ffi::archive_read_free(archive_reader), archive_reader)?;
-        archive_result(ffi::archive_write_close(archive_writer), archive_writer)?;
-        archive_result(ffi::archive_write_free(archive_writer), archive_writer)?;
-        ffi::archive_entry_free(archive_entry);
+    fn destroy(self) -> Result<()> {
+        unsafe {
+            archive_result(
+                ffi::archive_read_close(self.archive_reader),
+                self.archive_reader,
+            )?;
+            archive_result(
+                ffi::archive_read_free(self.archive_reader),
+                self.archive_reader,
+            )?;
+            archive_result(
+                ffi::archive_write_close(self.archive_writer),
+                self.archive_writer,
+            )?;
+            archive_result(
+                ffi::archive_write_free(self.archive_writer),
+                self.archive_writer,
+            )?;
+            drop(self.pipe);
+            Ok(())
+        }
+    }
 
-        Ok(res)
+    fn run_and_destroy<T, F>(mut self, f: F) -> Result<T>
+    where
+        F: FnOnce(&mut Self) -> Result<T>,
+    {
+        let res = f(&mut self);
+        self.destroy()?;
+        res
+    }
+}
+
+struct ArchiveEntry {
+    inner: *mut ffi::archive_entry,
+}
+
+impl ArchiveEntry {
+    fn new() -> Self {
+        Self {
+            inner: unsafe { ffi::archive_entry_new() },
+        }
+    }
+}
+
+impl Drop for ArchiveEntry {
+    fn drop(&mut self) {
+        unsafe { ffi::archive_entry_free(self.inner) };
     }
 }
 
