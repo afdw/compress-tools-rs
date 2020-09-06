@@ -89,6 +89,50 @@ enum Mode {
     WriteDisk { ownership: Ownership },
 }
 
+pub struct Entry {
+    inner: ArchiveEntry,
+}
+
+impl Entry {
+    fn path(&self) -> Result<&str> {
+        Ok(self.inner.pathname()?.unwrap())
+    }
+}
+
+pub struct ArchiveIterator<'a> {
+    open_archive: Box<OpenArchive<'a>>,
+}
+
+impl<'a> Iterator for ArchiveIterator<'a> {
+    type Item = Result<Entry>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        unsafe {
+            let archive_entry = ArchiveEntry::new();
+            match ffi::archive_read_next_header2(
+                self.open_archive.archive_reader,
+                archive_entry.inner,
+            ) {
+                ffi::ARCHIVE_OK => Some(Ok(Entry {
+                    inner: archive_entry,
+                })),
+                ffi::ARCHIVE_EOF => None,
+                _ => Some(Err(Error::from(self.open_archive.archive_reader))),
+            }
+        }
+    }
+}
+
+pub fn archive_iter<'a, R>(source: &'a mut R) -> Result<ArchiveIterator<'a>>
+where
+    R: 'a + Read,
+{
+    let open_archive = OpenArchive::create(Mode::AllFormat, source)?;
+    Ok(ArchiveIterator {
+        open_archive: Box::new(open_archive),
+    })
+}
+
 /// Get all files in a archive using `source` as a reader.
 /// # Example
 ///
@@ -107,20 +151,9 @@ pub fn list_archive_files<R>(mut source: R) -> Result<Vec<String>>
 where
     R: Read,
 {
-    let open_archive = OpenArchive::create(Mode::AllFormat, &mut source)?;
-    let archive_entry = ArchiveEntry::new();
-    open_archive.run_and_destroy(|open_archive| unsafe {
-        let mut file_list = Vec::new();
-        loop {
-            match ffi::archive_read_next_header2(open_archive.archive_reader, archive_entry.inner) {
-                ffi::ARCHIVE_OK => {
-                    file_list.push(archive_entry.pathname()?.unwrap().to_owned());
-                }
-                ffi::ARCHIVE_EOF => return Ok(file_list),
-                _ => return Err(Error::from(open_archive.archive_reader)),
-            }
-        }
-    })
+    archive_iter(&mut source)?
+        .map(|result| result.and_then(|entry| entry.path().map(str::to_owned)))
+        .collect()
 }
 
 /// Uncompress a file using the `source` need as reader and the `target` as a
@@ -193,18 +226,20 @@ where
     R: Read,
 {
     let open_archive = OpenArchive::create(Mode::WriteDisk { ownership }, &mut source)?;
-    let archive_entry = ArchiveEntry::new();
+    let mut archive_entry = ArchiveEntry::new();
     open_archive.run_and_destroy(|open_archive| unsafe {
         loop {
             match ffi::archive_read_next_header2(open_archive.archive_reader, archive_entry.inner) {
                 ffi::ARCHIVE_EOF => return Ok(()),
                 ffi::ARCHIVE_OK => {
                     if let Some(pathname) = archive_entry.pathname()? {
-                        archive_entry.set_pathname(Some(dest.join(pathname).to_str().unwrap()));
+                        let path = dest.join(pathname);
+                        archive_entry.set_pathname(Some(path.to_str().unwrap()));
                     }
 
                     if let Some(hardlink) = archive_entry.hardlink()? {
-                        archive_entry.set_hardlink(Some(dest.join(hardlink).to_str().unwrap()));
+                        let path = dest.join(hardlink);
+                        archive_entry.set_hardlink(Some(path.to_str().unwrap()));
                     }
 
                     ffi::archive_write_header(open_archive.archive_writer, archive_entry.inner);
@@ -411,7 +446,7 @@ impl ArchiveEntry {
         }
     }
 
-    fn set_pathname(&self, pathname: Option<&str>) {
+    fn set_pathname(&mut self, pathname: Option<&str>) {
         unsafe {
             ffi::archive_entry_set_pathname(
                 self.inner,
@@ -424,7 +459,7 @@ impl ArchiveEntry {
         }
     }
 
-    fn hardlink(&self) -> Result<Option<&str>> {
+    fn hardlink(&mut self) -> Result<Option<&str>> {
         unsafe {
             let ptr = ffi::archive_entry_hardlink(self.inner);
             if ptr.is_null() {
