@@ -85,12 +85,6 @@ struct Pipe<'a> {
     buffer: [u8; READER_BUFFER_SIZE],
 }
 
-enum Mode {
-    AllFormat,
-    RawFormat,
-    WriteDisk { ownership: Ownership },
-}
-
 pub struct Entry {
     inner: ArchiveEntry,
     open_archive_archive_reader: *mut ffi::archive,
@@ -163,7 +157,7 @@ pub fn archive_iter<'a, R>(source: &'a mut R) -> Result<ArchiveIterator<'a>>
 where
     R: 'a + Read,
 {
-    let open_archive = OpenArchive::create(Mode::AllFormat, source)?;
+    let open_archive = OpenArchive::create(true, false, None, source)?;
     Ok(ArchiveIterator {
         open_archive: Some(Box::new(open_archive)),
         last_entry_valid: None,
@@ -229,7 +223,7 @@ where
     R: Read,
     W: Write,
 {
-    let open_archive = OpenArchive::create(Mode::RawFormat, &mut source)?;
+    let open_archive = OpenArchive::create(false, true, None, &mut source)?;
     let archive_entry = ArchiveEntry::new();
     open_archive.run_and_destroy(|open_archive| unsafe {
         archive_result(
@@ -262,7 +256,7 @@ pub fn uncompress_archive<R>(mut source: R, dest: &Path, ownership: Ownership) -
 where
     R: Read,
 {
-    let open_archive = OpenArchive::create(Mode::WriteDisk { ownership }, &mut source)?;
+    let open_archive = OpenArchive::create(true, true, Some(ownership), &mut source)?;
     let mut archive_entry = ArchiveEntry::new();
     open_archive.run_and_destroy(|open_archive| unsafe {
         loop {
@@ -337,7 +331,12 @@ struct OpenArchive<'a> {
 }
 
 impl<'a> OpenArchive<'a> {
-    fn create<R>(mode: Mode, reader: &'a mut R) -> Result<Self>
+    fn create<R>(
+        all_format: bool,
+        raw_format: bool,
+        ownership: Option<Ownership>,
+        reader: &'a mut R,
+    ) -> Result<Self>
     where
         R: Read,
     {
@@ -350,43 +349,39 @@ impl<'a> OpenArchive<'a> {
                 archive_reader,
             )?;
 
-            match mode {
-                Mode::RawFormat => archive_result(
-                    ffi::archive_read_support_format_raw(archive_reader),
-                    archive_reader,
-                )?,
-                Mode::AllFormat => archive_result(
+            if all_format {
+                archive_result(
                     ffi::archive_read_support_format_all(archive_reader),
                     archive_reader,
-                )?,
-                Mode::WriteDisk { ownership } => {
-                    let mut writer_flags = ffi::ARCHIVE_EXTRACT_TIME
-                        | ffi::ARCHIVE_EXTRACT_PERM
-                        | ffi::ARCHIVE_EXTRACT_ACL
-                        | ffi::ARCHIVE_EXTRACT_FFLAGS
-                        | ffi::ARCHIVE_EXTRACT_XATTR;
+                )?;
+            }
 
-                    if let Ownership::Preserve = ownership {
-                        writer_flags |= ffi::ARCHIVE_EXTRACT_OWNER;
-                    };
+            if raw_format {
+                archive_result(
+                    ffi::archive_read_support_format_raw(archive_reader),
+                    archive_reader,
+                )?;
+            }
 
-                    archive_result(
-                        ffi::archive_write_disk_set_options(archive_writer, writer_flags as i32),
-                        archive_writer,
-                    )?;
-                    archive_result(
-                        ffi::archive_write_disk_set_standard_lookup(archive_writer),
-                        archive_writer,
-                    )?;
-                    archive_result(
-                        ffi::archive_read_support_format_all(archive_reader),
-                        archive_reader,
-                    )?;
-                    archive_result(
-                        ffi::archive_read_support_format_raw(archive_reader),
-                        archive_reader,
-                    )?;
-                }
+            if let Some(ownership) = ownership {
+                let mut writer_flags = ffi::ARCHIVE_EXTRACT_TIME
+                    | ffi::ARCHIVE_EXTRACT_PERM
+                    | ffi::ARCHIVE_EXTRACT_ACL
+                    | ffi::ARCHIVE_EXTRACT_FFLAGS
+                    | ffi::ARCHIVE_EXTRACT_XATTR;
+
+                if let Ownership::Preserve = ownership {
+                    writer_flags |= ffi::ARCHIVE_EXTRACT_OWNER;
+                };
+
+                archive_result(
+                    ffi::archive_write_disk_set_options(archive_writer, writer_flags as i32),
+                    archive_writer,
+                )?;
+                archive_result(
+                    ffi::archive_write_disk_set_standard_lookup(archive_writer),
+                    archive_writer,
+                )?;
             }
 
             if archive_reader.is_null() || archive_writer.is_null() {
